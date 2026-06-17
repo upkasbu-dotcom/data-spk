@@ -38,34 +38,30 @@ def push_json_ke_github(nama_file, path_lokal, commit_msg="Auto update data SCM 
         print(f"❌ Terjadi error saat push ke GitHub: {e}")
 
 def parse_downloaded_file(filepath):
-    """Membaca file yang terunduh (xlsx, csv, json) menjadi list of dictionary"""
+    """Membaca file yang terunduh (xlsx, csv) menjadi list of dictionary"""
     data = []
-    if filepath.endswith('.json'):
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
-    elif filepath.endswith('.csv'):
-        with open(filepath, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                data.append(dict(row))
-                
-    elif filepath.endswith('.xlsx') or filepath.endswith('.xls'):
-        wb = load_workbook(filename=filepath)
-        sheet = wb.active
-        rows = list(sheet.iter_rows(values_only=True))
-        if len(rows) > 1:
-            headers = [str(h).strip() if h else f"col_{i}" for i, h in enumerate(rows[0])]
-            for row in rows[1:]:
-                row_data = {}
-                for i, val in enumerate(row):
-                    if i < len(headers):
-                        # Ubah datetime object jadi string jika ada
-                        if isinstance(val, datetime):
-                            val = val.strftime("%Y-%m-%d %H:%M:%S")
-                        row_data[headers[i]] = val
-                data.append(row_data)
-                
+    try:
+        if filepath.endswith('.csv'):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    data.append(dict(row))
+        elif filepath.endswith('.xlsx') or filepath.endswith('.xls'):
+            wb = load_workbook(filename=filepath)
+            sheet = wb.active
+            rows = list(sheet.iter_rows(values_only=True))
+            if len(rows) > 1:
+                headers = [str(h).strip() if h else f"col_{i}" for i, h in enumerate(rows[0])]
+                for row in rows[1:]:
+                    row_data = {}
+                    for i, val in enumerate(row):
+                        if i < len(headers):
+                            if isinstance(val, datetime):
+                                val = val.strftime("%Y-%m-%d %H:%M:%S")
+                            row_data[headers[i]] = val
+                    data.append(row_data)
+    except Exception as e:
+        print(f"Error parsing file: {e}")
     return data
 
 def scrape_table_to_json(driver):
@@ -110,7 +106,6 @@ def main():
 
     print("[*] Kredensial berhasil dimuat.")
 
-    # Setup Chrome & Auto-Download ke folder kerja saat ini
     download_dir = os.getcwd()
     chrome_options = Options()
     chrome_options.add_argument('--headless=new')
@@ -119,7 +114,6 @@ def main():
     chrome_options.add_argument('--disable-gpu')
     chrome_options.add_argument('--window-size=1920,1080')
     
-    # Konfigurasi auto download
     prefs = {
         "download.default_directory": download_dir,
         "download.prompt_for_download": False,
@@ -129,6 +123,9 @@ def main():
     chrome_options.add_experimental_option("prefs", prefs)
 
     driver = None
+    data_hasil_scraping = []
+    status_eksekusi = "GAGAL" 
+
     try:
         print("[*] Memulai Google Chrome...")
         driver = webdriver.Chrome(options=chrome_options)
@@ -139,94 +136,108 @@ def main():
         # =========================================================
         print("[*] Membuka halaman login SCM Nusadaya...")
         driver.get("https://scm.nusadaya.net/login")
-        time.sleep(3)
+        time.sleep(5)
 
         try:
-            # Cari input username/email (mencoba beberapa nama umum)
-            user_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='username'], input[name='email'], input[type='text']")))
-            pass_field = driver.find_element(By.CSS_SELECTOR, "input[name='password'], input[type='password']")
+            # Deteksi form login yang lebih akurat
+            user_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'], input[type='email']")))
+            pass_field = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
             
             user_field.clear()
             user_field.send_keys(username)
             pass_field.clear()
             pass_field.send_keys(password)
             
-            # Klik tombol login
-            login_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit'], button.btn-primary, input[type='submit']")
+            # Cari tombol submit
+            login_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit'], button.btn-primary")
             login_btn.click()
             
             print("[*] Berhasil submit login. Menunggu halaman dashboard...")
-            time.sleep(5)
+            time.sleep(7) 
         except Exception as e:
-            print(f"⚠️ Gagal menemukan form login (mungkin sudah login atau halaman berubah): {e}")
+            print(f"⚠️ Gagal menemukan form login: {e}")
 
         # =========================================================
         # 2. BUKA HALAMAN EXPORT
         # =========================================================
         print("[*] Membuka halaman Izin Prinsip Export...")
         driver.get("https://scm.nusadaya.net/izin-prinsip/export")
-        time.sleep(5) # Beri waktu untuk proses render atau download
+        time.sleep(5)
 
         # =========================================================
-        # 3. CEK FILE TERUNDUH ATAU SCRAPE TABEL
+        # 3. CEK HASIL EXPORT (TUNGGU DOWNLOAD / BACA JSON / SCRAPE TABEL)
         # =========================================================
-        data_hasil_scraping = []
         
-        # Cari file yang baru saja terunduh (xlsx, csv, atau json)
-        list_files = glob.glob(os.path.join(download_dir, "*.*"))
-        export_files = [f for f in list_files if f.endswith(('.xlsx', '.xls', '.csv', '.json'))]
-        
-        # Abaikan file json bawaan github jika ada
-        export_files = [f for f in export_files if not f.endswith('package.json') and not f.endswith('data_scm.json')]
-        
-        if export_files:
-            # Ambil file yang paling baru terunduh
-            latest_file = max(export_files, key=os.path.getctime)
-            print(f"[*] File terdeteksi terunduh: {os.path.basename(latest_file)}")
+        # Cek apakah halaman langsung menampilkan JSON mentah
+        try:
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            if body_text.strip().startswith('[') or body_text.strip().startswith('{'):
+                print("[*] Halaman langsung mengembalikan format JSON.")
+                data_hasil_scraping = json.loads(body_text)
+        except:
+            pass
+
+        # Jika bukan JSON mentah, cek apakah ada file yang terunduh
+        if not data_hasil_scraping:
+            list_files = glob.glob(os.path.join(download_dir, "*.*"))
+            export_files = [f for f in list_files if f.endswith(('.xlsx', '.xls', '.csv'))]
             
-            # Parse file menjadi JSON
-            data_hasil_scraping = parse_downloaded_file(latest_file)
-            
-            # Hapus file mentah agar tidak ikut tercommit ke repo
-            try:
-                os.remove(latest_file)
-            except:
-                pass
-        else:
-            print("[*] Tidak ada file terunduh. Mencoba scrape tabel dari halaman web...")
+            if export_files:
+                latest_file = max(export_files, key=os.path.getctime)
+                print(f"[*] File terdeteksi terunduh: {os.path.basename(latest_file)}")
+                time.sleep(2) # Pastikan file selesai diunduh
+                data_hasil_scraping = parse_downloaded_file(latest_file)
+                try:
+                    os.remove(latest_file)
+                except:
+                    pass
+
+        # Jika masih kosong, coba scrape tabel HTML
+        if not data_hasil_scraping:
+            print("[*] Tidak ada JSON/File unduhan. Mencoba scrape tabel HTML...")
             data_hasil_scraping = scrape_table_to_json(driver)
 
-        # =========================================================
-        # 4. SIMPAN & PUSH HASIL JSON
-        # =========================================================
         if data_hasil_scraping:
+            status_eksekusi = "BERHASIL"
             print(f"[*] Berhasil mengambil {len(data_hasil_scraping)} baris data.")
-            
-            # Tambahkan timestamp bot berjalan
             for row in data_hasil_scraping:
                 row["tanggal_bot_eksekusi"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            nama_file_json = "data_scm.json"
-            with open(nama_file_json, "w", encoding="utf-8") as f:
-                json.dump(data_hasil_scraping, f, indent=4, ensure_ascii=False)
-            
-            print(f"[*] Data berhasil disimpan ke file lokal: {nama_file_json}")
-            
-            print("[*] Mengirim file JSON ke repository GitHub...")
-            push_json_ke_github(nama_file_json, nama_file_json)
         else:
-            print("❌ Tidak ada data yang berhasil diambil. Periksa kembali proses login atau struktur halaman export.")
-            # Mengambil screenshot untuk debugging jika gagal
+            print("❌ Tidak ada data yang berhasil diambil dari halaman export.")
+            # Buat data error agar memaksa menimpa file JSON lama (dummy Beras/Gula hilang)
+            data_hasil_scraping = [{
+                "status": "GAGAL_SCRAPING", 
+                "pesan": "Bot berhasil login tapi tidak menemukan data di halaman export. Periksa struktur halaman / screenshot error.",
+                "tanggal_bot_eksekusi": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }]
             driver.save_screenshot("error_scm.png")
             push_json_ke_github("error_scm.png", "error_scm.png", commit_msg="Add error screenshot")
 
     except Exception as e:
-        print(f"❌ Error saat menjalankan bot: {e}")
+        print(f"❌ Error fatal saat menjalankan bot: {e}")
+        data_hasil_scraping = [{
+            "status": "ERROR_SCRIPT", 
+            "pesan": str(e),
+            "tanggal_bot_eksekusi": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }]
         if driver:
             driver.save_screenshot("error_scm.png")
             push_json_ke_github("error_scm.png", "error_scm.png", commit_msg="Add error screenshot")
-        sys.exit(1)
     finally:
+        # =========================================================
+        # 4. SIMPAN & PUSH HASIL JSON (SELALU DIEKSEKUSI)
+        # =========================================================
+        nama_file_json = "data_scm.json"
+        try:
+            with open(nama_file_json, "w", encoding="utf-8") as f:
+                json.dump(data_hasil_scraping, f, indent=4, ensure_ascii=False)
+            print(f"[*] Data {status_eksekusi} disimpan ke file lokal: {nama_file_json}")
+            
+            print("[*] Mengirim file JSON ke repository GitHub...")
+            push_json_ke_github(nama_file_json, nama_file_json)
+        except Exception as e:
+            print(f"Gagal menyimpan JSON: {e}")
+            
         if driver:
             driver.quit()
             print("[*] Browser ditutup.")
