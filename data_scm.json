@@ -1,16 +1,7 @@
 [
     {
-        "id": 1,
-        "produk": "Beras Premium",
-        "stok": "150 karung",
-        "harga": "Rp 65.000",
-        "tanggal_update": "2026-06-17 17:21:50"
-    },
-    {
-        "id": 2,
-        "produk": "Gula Pasir",
-        "stok": "200 karung",
-        "harga": "Rp 16.000",
-        "tanggal_update": "2026-06-17 17:21:50"
+        "status": "GAGAL_SCRAPING",
+        "pesan": "Bot berhasil login tapi tidak menemukan data di halaman export. Periksa struktur halaman / screenshot error.",
+        "tanggal_bot_eksekusi": "2026-06-17 17:37:54"
     }
 ]
