@@ -6,6 +6,9 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch: # Tombol manual di halaman GitHub Actions
 
+permissions:
+  contents: write # Wajib agar bot bisa melakukan push/commit balik ke repo
+
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
@@ -19,20 +22,17 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install Google Chrome & Webdriver
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y chromium-browser chromium-chromedriver
-
     - name: Install Library Python Pendukung
       run: |
         python -m pip install --upgrade pip
-        pip install selenium requests openpyxl PyGithub
+        pip install selenium requests openpyxl PyGithub python-dotenv
 
     - name: Eksekusi Skrip Bot SCM
       env:
-        USERNAME: ${{ secrets.SCM_USERNAME }}
-        PASSWORD: ${{ secrets.SCM_PASSWORD }}
+        # Mengirim secret ke script python
+        SCM_USERNAME: ${{ secrets.SCM_USERNAME }}
+        SCM_PASSWORD: ${{ secrets.SCM_PASSWORD }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TZ: Asia/Jakarta
       run: |
         python bot_scm.py
