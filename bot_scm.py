@@ -5,6 +5,7 @@ import os
 import io
 import sys
 import traceback
+import shutil
 
 from github import Github
 from selenium import webdriver
@@ -61,20 +62,23 @@ def create_chrome_driver():
     Membuat instance Chrome WebDriver yang kompatibel dengan GitHub Actions.
     """
     options = Options()
-    options.add_argument('--headless=new')           
-    options.add_argument('--no-sandbox')             
-    options.add_argument('--disable-dev-shm-usage')  
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
     options.add_argument('--window-size=1920,1080')
     options.add_argument('--disable-extensions')
     options.add_argument('--disable-software-rasterizer')
     options.add_argument('--remote-allow-origins=*')
+    options.add_argument('--disable-blink-features=AutomationControlled')
     options.add_argument(
         '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
         'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     )
+    # Hilangkan flag 'webdriver' agar tidak mudah terdeteksi
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
 
-    import shutil
     chromedriver_path = shutil.which('chromedriver')
     if chromedriver_path:
         print(f"[INFO] ChromeDriver ditemukan di: {chromedriver_path}")
@@ -84,8 +88,56 @@ def create_chrome_driver():
         print("[WARNING] ChromeDriver tidak ditemukan di PATH, menggunakan default...")
         driver = webdriver.Chrome(options=options)
 
-    driver.set_page_load_timeout(60)
+    driver.set_page_load_timeout(90)
+
+    # Coba sembunyikan property navigator.webdriver
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {
+                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            },
+        )
+    except Exception:
+        pass
+
     return driver
+
+
+def _login_berhasil(driver, wait):
+    """
+    Cek apakah login berhasil menggunakan beberapa indikator.
+    Menggantikan EC.any_of yang hanya ada di Selenium >= 4.5.
+    """
+    indikator_url = ["dashboard", "home", "surat-perintah-kerja", "spk", "admin"]
+    indikator_xpath = [
+        "//nav",
+        "//header",
+        "//aside",
+        "//sidebar",
+        "//button[contains(text(),'Logout')]",
+        "//button[contains(text(),'Log out')]",
+        "//a[contains(@href,'logout')]",
+        "//a[contains(@href,'profil')]",
+    ]
+
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        current_url = driver.current_url.lower()
+        if any(keyword in current_url for keyword in indikator_url):
+            return True
+
+        for xpath in indikator_xpath:
+            try:
+                elem = driver.find_element(By.XPATH, xpath)
+                if elem.is_displayed():
+                    return True
+            except Exception:
+                continue
+
+        time.sleep(1)
+
+    return False
 
 
 def jalankan_bot():
@@ -96,10 +148,10 @@ def jalankan_bot():
     print("=== [START] Operasi Bot SCM ===")
     print("=" * 50)
 
-    username = os.environ.get('USERNAME')
-    password = os.environ.get('PASSWORD')
+    USERNAME = os.environ.get('USERNAME')
+    PASSWORD = os.environ.get('PASSWORD')
 
-    if not username or not password:
+    if not USERNAME or not PASSWORD:
         print("[ERROR] USERNAME atau PASSWORD tidak ditemukan di environment variables!")
         print("[ERROR] Pastikan secrets sudah dikonfigurasi di repository Settings > Secrets.")
         return False
@@ -112,38 +164,92 @@ def jalankan_bot():
         driver.get("https://scm.nusadaya.net/login")
         wait = WebDriverWait(driver, 30)
 
-        print("[STEP 1] Mengisi username...")
-        email_input = wait.until(
+        # Tunggu sampai minimal ada satu input terlihat
+        print("[STEP 1] Menunggu form login muncul...")
+        wait.until(
             EC.presence_of_element_located(
-                (By.XPATH, "//input[@type='text' or @placeholder='Email atau NIP']")
+                (By.XPATH, "//input[@type='text' or @type='email' or @placeholder]")
             )
         )
+
+        # Cari input username/email (case-insensitive via translate)
+        print("[STEP 1] Mengisi USERNAME...")
+        email_input = None
+        email_xpaths = [
+            "//input[translate(@type,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='text']",
+            "//input[translate(@type,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='email']",
+            "//input[contains(translate(@placeholder,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'email')]",
+            "//input[contains(translate(@placeholder,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'nip')]",
+            "//input[contains(translate(@placeholder,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'username')]",
+            "//input[@name='email' or @name='username' or @name='nip']",
+        ]
+        for xp in email_xpaths:
+            try:
+                email_input = driver.find_element(By.XPATH, xp)
+                if email_input.is_displayed():
+                    break
+            except Exception:
+                email_input = None
+
+        if email_input is None:
+            raise Exception("Input username/email tidak ditemukan!")
+
         email_input.clear()
-        email_input.send_keys(username)
+        email_input.send_keys(USERNAME)
 
-        print("[STEP 1] Mengisi password...")
-        password_input = driver.find_element(By.XPATH, "//input[@type='password']")
+        # Cari input password (FIX: case-sensitive, harus huruf kecil 'password')
+        print("[STEP 1] Mengisi PASSWORD...")
+        password_input = None
+        password_xpaths = [
+            "//input[translate(@type,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='password']",
+            "//input[@type='password']",
+            "//input[@name='password']",
+            "//input[@autocomplete='current-password']",
+        ]
+        for xp in password_xpaths:
+            try:
+                password_input = driver.find_element(By.XPATH, xp)
+                if password_input.is_displayed():
+                    break
+            except Exception:
+                password_input = None
+
+        if password_input is None:
+            raise Exception("Input password tidak ditemukan!")
+
         password_input.clear()
-        password_input.send_keys(password)
+        password_input.send_keys(PASSWORD)
 
+        # Klik tombol login (coba beberapa variasi teks)
         print("[STEP 1] Klik tombol Login...")
-        login_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Log in')]")
+        login_button = None
+        login_xpaths = [
+            "//button[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'log in')]",
+            "//button[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'login')]",
+            "//button[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'masuk')]",
+            "//button[@type='submit']",
+            "//input[@type='submit']",
+            "//button[contains(@class,'login')]",
+        ]
+        for xp in login_xpaths:
+            try:
+                login_button = driver.find_element(By.XPATH, xp)
+                if login_button.is_displayed() and login_button.is_enabled():
+                    break
+            except Exception:
+                login_button = None
+
+        if login_button is None:
+            raise Exception("Tombol login tidak ditemukan!")
+
         login_button.click()
 
         print("[STEP 1] Menunggu redirect setelah login...")
-        time.sleep(5) 
+        time.sleep(3)
 
-        try:
-            wait.until(
-                EC.any_of(
-                    EC.url_contains("dashboard"),
-                    EC.url_contains("home"),
-                    EC.url_contains("surat-perintah-kerja"),
-                    EC.presence_of_element_located((By.XPATH, "//nav | //header | //sidebar"))
-                )
-            )
-            print("[STEP 1] Login berhasil! Halaman berhasil dimuat.")
-        except Exception:
+        if _login_berhasil(driver, wait):
+            print(f"[STEP 1] Login berhasil! URL: {driver.current_url}")
+        else:
             print("[WARNING] Tidak dapat memverifikasi login berhasil, melanjutkan...")
             print(f"[WARNING] URL saat ini: {driver.current_url}")
 
@@ -152,8 +258,10 @@ def jalankan_bot():
         session_cookies = {c['name']: c['value'] for c in driver.get_cookies()}
         print(f"[STEP 2] Berhasil mengambil {len(session_cookies)} cookies.")
 
+        # Tambahkan XSRF-TOKEN dan session cookie bila ada
         headers = {
             'Referer': 'https://scm.nusadaya.net/surat-perintah-kerja',
+            'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/octet-stream, */*',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                           'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
@@ -170,13 +278,18 @@ def jalankan_bot():
                     download_url,
                     cookies=session_cookies,
                     headers=headers,
-                    timeout=60
+                    timeout=60,
+                    allow_redirects=True
                 )
                 if response_dl.status_code == 200:
                     print(f"[STEP 2] Download berhasil! (Attempt {attempt})")
+                    print(f"[STEP 2] Content-Type: {response_dl.headers.get('Content-Type')}")
+                    print(f"[STEP 2] Content-Length: {len(response_dl.content)} bytes")
                     break
                 else:
                     print(f"[STEP 2] Status code: {response_dl.status_code} (Attempt {attempt}/{max_retries})")
+                    if response_dl.status_code in (401, 403):
+                        print("[STEP 2] Akses ditolak, kemungkinan session tidak valid.")
             except requests.exceptions.RequestException as e:
                 print(f"[STEP 2] Request error: {e} (Attempt {attempt}/{max_retries})")
 
@@ -225,10 +338,22 @@ def jalankan_bot():
     except Exception as e:
         print(f"[FATAL ERROR] Terjadi error: {e}")
         traceback.print_exc()
+        # Simpan screenshot untuk debugging
+        try:
+            driver.save_screenshot("error_screenshot.png")
+            print("[DEBUG] Screenshot disimpan: error_screenshot.png")
+            with open("error_page.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            print("[DEBUG] Page source disimpan: error_page.html")
+        except Exception:
+            pass
         return False
 
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
         print("[INFO] Browser ditutup.")
 
 
