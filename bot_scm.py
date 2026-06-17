@@ -28,7 +28,6 @@ def upload_to_github(data, filename="data_scm.json"):
 
     try:
         g = Github(token)
-        # Menuju repository tujuan sesuai spesifikasi Anda
         repo = g.get_repo("upkasbu-dotcom/data-spk")
         file_content = json.dumps(data, indent=4, ensure_ascii=False)
 
@@ -62,9 +61,9 @@ def create_chrome_driver():
     Membuat instance Chrome WebDriver yang kompatibel dengan GitHub Actions.
     """
     options = Options()
-    options.add_argument('--headless=new')           # Headless mode terbaru
-    options.add_argument('--no-sandbox')             # Wajib untuk CI/CD
-    options.add_argument('--disable-dev-shm-usage')  # Menghindari crash di container
+    options.add_argument('--headless=new')           
+    options.add_argument('--no-sandbox')             
+    options.add_argument('--disable-dev-shm-usage')  
     options.add_argument('--disable-gpu')
     options.add_argument('--window-size=1920,1080')
     options.add_argument('--disable-extensions')
@@ -91,10 +90,7 @@ def create_chrome_driver():
 
 def jalankan_bot():
     """
-    Fungsi utama bot SCM:
-    1. Login ke SCM Nusadaya
-    2. Download file Excel surat perintah kerja
-    3. Ekstrak data dan Upload data ke GitHub berbentuk JSON
+    Fungsi utama bot SCM Nusadaya.
     """
     print("=" * 50)
     print("=== [START] Operasi Bot SCM ===")
@@ -116,7 +112,6 @@ def jalankan_bot():
         driver.get("https://scm.nusadaya.net/login")
         wait = WebDriverWait(driver, 30)
 
-        # Isi username/email (Perbaikan sintaks pencarian XPATH yang typo sebelumnya)
         print("[STEP 1] Mengisi username...")
         email_input = wait.until(
             EC.presence_of_element_located(
@@ -126,13 +121,11 @@ def jalankan_bot():
         email_input.clear()
         email_input.send_keys(username)
 
-        # Isi password
         print("[STEP 1] Mengisi password...")
         password_input = driver.find_element(By.XPATH, "//input[@type='password']")
         password_input.clear()
         password_input.send_keys(password)
 
-        # Klik tombol login
         print("[STEP 1] Klik tombol Login...")
         login_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Log in')]")
         login_button.click()
