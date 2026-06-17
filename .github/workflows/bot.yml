@@ -2,9 +2,9 @@ name: Otomatisasi Bot SCM Nusadaya
 
 on:
   schedule:
-    # Terjadwal otomatis berjalan setiap hari jam 07:00 WIB (00:00 UTC)
+    # Berjalan otomatis setiap hari jam 07:00 WIB (00:00 UTC)
     - cron: '0 0 * * *'
-  workflow_dispatch: # Mengaktifkan tombol "Run workflow" manual di tab Actions
+  workflow_dispatch: # Tombol manual di halaman GitHub Actions
 
 jobs:
   run-scraper:
@@ -19,7 +19,7 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install Google Chrome & Webdriver Bawaan Linux
+    - name: Install Google Chrome & Webdriver
       run: |
         sudo apt-get update
         sudo apt-get install -y chromium-browser chromium-chromedriver
@@ -31,7 +31,6 @@ jobs:
 
     - name: Eksekusi Skrip Bot SCM
       env:
-        # Menghubungkan Secrets GitHub ke Kode Python
         USERNAME: ${{ secrets.SCM_USERNAME }}
         PASSWORD: ${{ secrets.SCM_PASSWORD }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
