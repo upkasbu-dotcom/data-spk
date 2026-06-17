@@ -1,0 +1,16 @@
+[
+    {
+        "id": 1,
+        "produk": "Beras Premium",
+        "stok": "150 karung",
+        "harga": "Rp 65.000",
+        "tanggal_update": "2026-06-17 17:21:50"
+    },
+    {
+        "id": 2,
+        "produk": "Gula Pasir",
+        "stok": "200 karung",
+        "harga": "Rp 16.000",
+        "tanggal_update": "2026-06-17 17:21:50"
+    }
+]
